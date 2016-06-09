@@ -4,7 +4,7 @@
 # Synopsis: Abstract superclass for Header and OO structures
 #
 # Author: Matt Morse (matt@apple.com)
-# Last Updated: $Date: 2004/03/01 21:59:08 $
+# Last Updated: $Date: 2004/06/13 04:59:12 $
 # 
 # Method additions by SKoT McDonald <skot@tomandandy.com> Aug 2001 
 #
@@ -39,7 +39,9 @@ BEGIN {
 }
 use HeaderDoc::HeaderElement;
 use HeaderDoc::DBLookup;
-use HeaderDoc::Utilities qw(findRelativePath safeName getAPINameAndDisc convertCharsForFileMaker printArray printHash resolveLink quote);
+use HeaderDoc::Utilities qw(findRelativePath safeName getAPINameAndDisc convertCharsForFileMaker printArray printHash resolveLink quote sanitize);
+use File::Basename;
+use Cwd;
 
 use strict;
 use vars qw($VERSION @ISA);
@@ -50,7 +52,7 @@ $VERSION = '1.20';
 ################ Portability ###################################
 my $isMacOS;
 my $pathSeparator;
-if ($^O =~ /MacOS/i) {
+if ($^O =~ /MacOS/io) {
 	$pathSeparator = ":";
 	$isMacOS = 1;
 } else {
@@ -142,6 +144,7 @@ sub fix_date
 {
     $dateStamp = HeaderDoc::HeaderElement::strdate($moy, $dom, $year);
     # print "fixed date stamp.\n";
+    return $dateStamp;
 }
 
 sub new {
@@ -159,7 +162,7 @@ sub _initialize {
 
     $self->SUPER::_initialize();
     
-    $self->{OUTPUTDIR} = undef;
+    # $self->{OUTPUTDIR} = undef;
     $self->{CONSTANTS} = ();
     $self->{FUNCTIONS} = ();
     $self->{METHODS} = ();
@@ -168,18 +171,18 @@ sub _initialize {
     $self->{VARS} = ();
     $self->{PDEFINES} = ();
     $self->{ENUMS} = ();
-    $self->{CONSTANTSDIR} = undef;
-    $self->{DATATYPESDIR} = undef;
-    $self->{STRUCTSDIR} = undef;
-    $self->{VARSDIR} = undef;
-    $self->{FUNCTIONSDIR} = undef;
-    $self->{METHODSDIR} = undef;
-    $self->{PDEFINESDIR} = undef;
-    $self->{ENUMSDIR} = undef;
-    $self->{EXPORTSDIR} = undef;
-    $self->{EXPORTINGFORDB} = 0;
+    # $self->{CONSTANTSDIR} = undef;
+    # $self->{DATATYPESDIR} = undef;
+    # $self->{STRUCTSDIR} = undef;
+    # $self->{VARSDIR} = undef;
+    # $self->{FUNCTIONSDIR} = undef;
+    # $self->{METHODSDIR} = undef;
+    # $self->{PDEFINESDIR} = undef;
+    # $self->{ENUMSDIR} = undef;
+    # $self->{EXPORTSDIR} = undef;
+    # $self->{EXPORTINGFORDB} = 0;
     $self->{TOCTITLEPREFIX} = 'GENERIC_OWNER:';
-    $self->{HEADEROBJECT} = undef;
+    # $self->{HEADEROBJECT} = undef;
     $self->{NAMESPACE} = "";
     $self->{UPDATED} = "";
     $self->{EXPLICITSUPER} = 0;
@@ -188,6 +191,7 @@ sub _initialize {
     $self->{ISMERGED} = 0;
     $self->{CCLASS} = 0;
     $self->{HEADEROBJECT} = 0;
+    $self->{CLASS} = "HeaderDoc::APIOwner";
 } 
 
 sub clone {
@@ -318,6 +322,12 @@ sub isCOMInterface
 }
 
 
+sub isAPIOwner
+{
+    return 1;
+}
+
+
 # /*! @function explicitSuper
 #     @abstract Test if superclass was specified in markup
 #     @discussion
@@ -434,37 +444,6 @@ sub outputDir {
     return $self->{OUTPUTDIR};
 }
 
-# /*! @function make_classref
-#     @abstract This function turns a classname into a pseudo-link
-#     @availability deprecated
-#  */
-sub make_classref
-{
-    my $self = shift;
-    my $classname = shift;
-    my $apiUIDPrefix = $self->apiUIDPrefix();
-    my $localDebug = 0;
-    my $retval = "";
-
-    # Not yet implemented
-    # my $lang = $self->lang();
-
-    my $lang = "c";
-    my $class = ref($self) || $self;
-
-    if ($class =~ /^HeaderDoc::CPPClass$/) {
-	$lang = "cpp";
-    } elsif ($class =~ /^HeaderDoc::ObjC/) {
-	$lang = "occ";
-    }
-
-    $retval = "//$apiUIDPrefix/$lang/cl/$classname";
-
-    print "make_classref: ref is $retval\n" if ($localDebug);;
-
-    return $retval;
-}
-
 sub tocTitlePrefix {
     my $self = shift;
 
@@ -575,6 +554,7 @@ sub tocStringSub {
     my $baseref = shift;
     my $composite = shift;
     my $ignore_access = shift;
+    my $tag = shift;
 
     my $localDebug = 0;
     my $class = ref($self) || $self;
@@ -582,11 +562,15 @@ sub tocStringSub {
     my @objs = @{$objref};
 
     my $tocString = "";
+    my $jumpLabel = "";
+    if ($tag && $tag ne "") {
+	$jumpLabel = "#HeaderDoc_$tag";
+    }
 
 	    if ($composite) {
-	        $tocString .= "<h4><a href=\"$compositePageName#HeaderDoc_functions\" target=\"doc\">$head</a></h4>\n";
+	        $tocString .= "<h4><a href=\"$compositePageName$jumpLabel\" target=\"doc\">$head</a></h4>\n";
 	    } else {
-	        $tocString .= "<h4><a href=\"$baseref#HeaderDoc_functions\" target=\"doc\">$head</a></h4>\n";
+	        $tocString .= "<h4><a href=\"$baseref$jumpLabel\" target=\"doc\">$head</a></h4>\n";
 	    }
 
 	    foreach my $group (@groups) {
@@ -595,6 +579,7 @@ sub tocStringSub {
 
 		my @groupobjs = ();
 		my @tempobjs = ();
+		my @cdobjs = ();
 		if ($HeaderDoc::sort_entries) {
 			@tempobjs = sort objName @objs;
 		} else {
@@ -603,7 +588,11 @@ sub tocStringSub {
 		foreach my $obj (@tempobjs) {
 		    if ($obj->group() eq $group) {
 			$done_one = 1;
-			push(@groupobjs, $obj);
+			if (!$HeaderDoc::sort_entries || !$obj->constructor_or_destructor()) {
+			    push(@groupobjs, $obj);
+			} else {
+			    push(@cdobjs, $obj);
+			}
 		    }
 		}
 		if (!$done_one) {
@@ -633,11 +622,11 @@ sub tocStringSub {
 
 # print "ACCESS: $access\n";
 	        
-	        if ($access =~ /public/ || $ignore_access){
+	        if ($access =~ /public/o || $ignore_access){
 	            push (@publics, $obj);
-	        } elsif ($access =~ /protected/){
+	        } elsif ($access =~ /protected/o){
 	            push (@protecteds, $obj);
-	        } elsif ($access =~ /private/){
+	        } elsif ($access =~ /private/o){
 	            push (@privates, $obj);
 		} elsif ($access eq "") {
 		    push (@Cs, $obj);
@@ -646,6 +635,29 @@ sub tocStringSub {
 		    push (@publics, $obj);
 		}
 	      }
+	      if (@cdobjs) {
+		    $tocString .= "\n";
+		    my @tempobjs = ();
+		    if ($HeaderDoc::sort_entries) {
+			@tempobjs = sort objName @cdobjs;
+		    } else {
+			@tempobjs = @cdobjs;
+		    }
+		    foreach my $obj (@tempobjs) {
+	        	my $name = $obj->name();
+			my $urlname = $obj->apiuid(); # sanitize($name);
+	        	if ($self->outputformat eq "hdxml") {
+	        	    $tocString .= "XMLFIX<nobr>$preface<a href=\"$baseref#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
+		        } elsif ($self->outputformat eq "html") {
+			    if ($composite) {
+	        		$tocString .= "<nobr>$preface<a href=\"$compositePageName#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
+			    } else {
+	        		$tocString .= "<nobr>$preface<a href=\"$baseref#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
+			    }
+			} else {
+			}
+		    }
+	        }
 	      if (@Cs) {
 		    $tocString .= "\n";
 		    my @tempobjs = ();
@@ -656,13 +668,14 @@ sub tocStringSub {
 		    }
 		    foreach my $obj (@tempobjs) {
 	        	my $name = $obj->name();
+			my $urlname = $obj->apiuid(); # sanitize($name);
 	        	if ($self->outputformat eq "hdxml") {
-	        	    $tocString .= "XMLFIX<nobr>$preface<a href=\"$baseref#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        	    $tocString .= "XMLFIX<nobr>$preface<a href=\"$baseref#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 		        } elsif ($self->outputformat eq "html") {
 			    if ($composite) {
-	        		$tocString .= "<nobr>$preface<a href=\"$compositePageName#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>$preface<a href=\"$compositePageName#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    } else {
-	        		$tocString .= "<nobr>$preface<a href=\"$baseref#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>$preface<a href=\"$baseref#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    }
 			} else {
 			}
@@ -685,13 +698,14 @@ sub tocStringSub {
 		    }
 		    foreach my $obj (@tempobjs) {
 	        	my $name = $obj->name();
+			my $urlname = $obj->apiuid(); # sanitize($name);
 	        	if ($self->outputformat eq "hdxml") {
-	        	    $tocString .= "XMLFIX<nobr>$preface<a href=\"$baseref#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        	    $tocString .= "XMLFIX<nobr>$preface<a href=\"$baseref#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 		        } elsif ($self->outputformat eq "html") {
 			    if ($composite) {
-	        		$tocString .= "<nobr>$preface<a href=\"$compositePageName#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>$preface<a href=\"$compositePageName#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    } else {
-	        		$tocString .= "<nobr>$preface<a href=\"$baseref#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>$preface<a href=\"$baseref#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    }
 			} else {
 			}
@@ -714,13 +728,14 @@ sub tocStringSub {
 		    }
 		    foreach my $obj (@tempobjs) {
 	        	my $name = $obj->name();
+			my $urlname = $obj->apiuid(); # sanitize($name);
 		        if ($self->outputformat eq "hdxml") {
-	        	    $tocString .= "XMLFIX<nobr>$preface<a href=\"$baseref#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        	    $tocString .= "XMLFIX<nobr>$preface<a href=\"$baseref#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 		        } elsif ($self->outputformat eq "html") {
 			    if ($composite) {
-	        		$tocString .= "<nobr>$preface<a href=\"$compositePageName#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>$preface<a href=\"$compositePageName#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    } else {
-	        		$tocString .= "<nobr>$preface<a href=\"$baseref#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>$preface<a href=\"$baseref#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    }
 			} else {
 			}
@@ -743,13 +758,14 @@ sub tocStringSub {
 		    }
 		    foreach my $obj (@tempobjs) {
 	        	my $name = $obj->name();
+			my $urlname = $obj->apiuid(); # sanitize($name);
 	        	if ($self->outputformat eq "hdxml") {
-	        	    $tocString .= "XMLFIX<nobr>$preface<a href=\"$baseref#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        	    $tocString .= "XMLFIX<nobr>$preface<a href=\"$baseref#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 		        } elsif ($self->outputformat eq "html") {
 			    if ($composite) {
-	        		$tocString .= "<nobr>$preface<a href=\"$compositePageName#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>$preface<a href=\"$compositePageName#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    } else {
-	        		$tocString .= "<nobr>$preface<a href=\"$baseref#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>$preface<a href=\"$baseref#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    }
 			} else {
 			}
@@ -787,13 +803,11 @@ sub tocString {
     my $xml = 0;
     if ($self->outputformat() eq "hdxml") { $xml = 1; }
 
-    $contentFrameName =~ s/(.*)\.h/$1/; 
+    $contentFrameName =~ s/(.*)\.h/$1/o; 
     $contentFrameName = &safeName(filename => $contentFrameName);  
     $contentFrameName = $contentFrameName . ".html";
 
-    # this could be a separate option, but really shouldn't be tied
-    # to $HeaderDoc::ClassAsComposite....
-    my $composite = 0;
+    my $composite = $HeaderDoc::ClassAsComposite;
 
     my $compositePageName = HeaderDoc::APIOwner->compositePageName(); 
     my $defaultFrameName = HeaderDoc::APIOwner->defaultFrameName(); 
@@ -801,7 +815,7 @@ sub tocString {
     if ($xml && $class ne "HeaderDoc::Header") { $compositePageName = $self->filename(); }
 	# @@@ WRONG PRINTABLE PAGE
     if ($xml) {
-	$compositePageName =~ s/\.(h|i)$//;
+	$compositePageName =~ s/\.(h|i)$//o;
 	$compositePageName .= ".xml";
     }
     
@@ -851,7 +865,7 @@ sub tocString {
 	    }
 	    my $baseref = "Functions/Functions.html";
 	    $tocString .= $self->tocStringSub($funchead, \@groups, \@funcs,
-		$compositePageName, $baseref, $composite, 0);
+		$compositePageName, $baseref, $composite, 0, "functions");
     }
     if (@methods) {
 	    # $tocString .= "<h4>Methods</h4>\n";
@@ -889,9 +903,9 @@ sub tocString {
 	      foreach my $obj (sort byMethodType @groupmeths) {
 	        my $type = $obj->isInstanceMethod();
 	        
-	        if ($type =~ /NO/){
+	        if ($type =~ /NO/o){
 	            push (@classMethods, $obj);
-	        } elsif ($type =~ /YES/){
+	        } elsif ($type =~ /YES/o){
 	            push (@instanceMethods, $obj);
 	        } else {
 		    # assume instanceMethod
@@ -915,13 +929,14 @@ sub tocString {
 		    }
 		    foreach my $obj (@tempobjs) {
 	        	my $name = $obj->name();
+			my $urlname = $obj->apiuid();
 	        	if ($self->outputformat eq "hdxml") {
-	        	    $tocString .= "XMLFIX<nobr>&nbsp;&nbsp;<a href=\"Methods/Methods.html#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        	    $tocString .= "XMLFIX<nobr>&nbsp;&nbsp;<font size=\"-1\">+</font><a href=\"Methods/Methods.html#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 		        } elsif ($self->outputformat eq "html") {
 			    if ($composite) {
-	        		$tocString .= "<nobr>&nbsp;&nbsp;<a href=\"$compositePageName#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>&nbsp;&nbsp;<font size=\"-1\">+</font><a href=\"$compositePageName#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    } else {
-	        		$tocString .= "<nobr>&nbsp;&nbsp;<a href=\"Methods/Methods.html#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>&nbsp;&nbsp;<font size=\"-1\">+</font><a href=\"Methods/Methods.html#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    }
 			} else {
 			}
@@ -944,13 +959,14 @@ sub tocString {
 		    }
 		    foreach my $obj (@tempobjs) {
 	        	my $name = $obj->name();
+			my $urlname = $obj->apiuid();
 		        if ($self->outputformat eq "hdxml") {
-	        	    $tocString .= "XMLFIX<nobr>&nbsp;&nbsp;<a href=\"Methods/Methods.html#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        	    $tocString .= "XMLFIX<nobr>&nbsp;&nbsp;<font size=\"-1\">-</font><a href=\"Methods/Methods.html#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 		        } elsif ($self->outputformat eq "html") {
 			    if ($composite) {
-	        		$tocString .= "<nobr>&nbsp;&nbsp;<a href=\"$compositePageName#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>&nbsp;&nbsp;<font size=\"-1\">-</font><a href=\"$compositePageName#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    } else {
-	        		$tocString .= "<nobr>&nbsp;&nbsp;<a href=\"Methods/Methods.html#$name\" target=\"doc\">$name</a></nobr><br>\n";
+	        		$tocString .= "<nobr>&nbsp;&nbsp;<font size=\"-1\">-</font><a href=\"Methods/Methods.html#$urlname\" target=\"doc\">$name</a></nobr><br>\n";
 			    }
 			} else {
 			}
@@ -965,31 +981,31 @@ sub tocString {
 	    my $head = "Defined Types\n";
 	    my $baseref = "DataTypes/DataTypes.html";
 	    $tocString .= $self->tocStringSub($head, \@groups, \@typedefs,
-		$compositePageName, $baseref, $composite, 1);
+		$compositePageName, $baseref, $composite, 1, "");
     }
     if (@structs) {
 	    my $head = "Structs and Unions\n";
 	    my $baseref = "Structs/Structs.html";
 	    $tocString .= $self->tocStringSub($head, \@groups, \@structs,
-		$compositePageName, $baseref, $composite, 1);
+		$compositePageName, $baseref, $composite, 1, "");
     }
     if (@constants) {
 	    my $head = "Constants\n";
 	    my $baseref = "Constants/Constants.html";
 	    $tocString .= $self->tocStringSub($head, \@groups, \@constants,
-		$compositePageName, $baseref, $composite, 1);
+		$compositePageName, $baseref, $composite, 1, "");
 	}
     if (@enums) {
 	    my $head = "Enumerations\n";
 	    my $baseref = "Enums/Enums.html";
 	    $tocString .= $self->tocStringSub($head, \@groups, \@enums,
-		$compositePageName, $baseref, $composite, 1);
+		$compositePageName, $baseref, $composite, 1, "");
 	}
     if (@pDefines) {
 	    my $head = "#defines\n";
 	    my $baseref = "PDefines/PDefines.html";
 	    $tocString .= $self->tocStringSub($head, \@groups, \@pDefines,
-		$compositePageName, $baseref, $composite, 1);
+		$compositePageName, $baseref, $composite, 1, "");
 	}
     if (@classes) {
 	my @realclasses = ();
@@ -1075,7 +1091,7 @@ sub tocString {
 	    }
 	    my $baseref = "Vars/Vars.html";
 	    $tocString .= $self->tocStringSub($globalname, \@groups, \@globals,
-		$compositePageName, $baseref, $composite, 0);
+		$compositePageName, $baseref, $composite, 0, "");
     }
     if ($class ne "HeaderDoc::Header") {
 	$tocString .= "<br><h4>Other Reference</h4><hr>\n";
@@ -1175,9 +1191,24 @@ sub addToFunctions {
 		my $name1 = $item->name();
 		my $name2 = $compare->name();
 		if ($item->name() eq $compare->name()) {
+			my $oldconflict = ($item->conflict() && compare->conflict());
 			$item->conflict(1);
 			$compare->conflict(1);
+			$HeaderDoc::ignore_apiuid_errors = 1;
+			my $junk = $item->apirefSetup(1);
+			$junk = $compare->apirefSetup(1);
+			$HeaderDoc::ignore_apiuid_errors = 0;
 			print "$name1 = $name2\n" if ($localDebug);
+
+			if (!$oldconflict) {
+			  my $apio = $self; # ->apiOwner();
+			  my $apioclass = ref($apio) || $apio;
+			  if ($apioclass ne "HeaderDoc::CPPClass") {
+			    if ($apioclass !~ /HeaderDoc::ObjC/o) {
+				warn "Conflicting declarations for function/method ($name1)\n    outside a class.  This is probably not what you want.\n";
+			    }
+			  }
+			}
 		}
 	    }
             push (@{ $self->{FUNCTIONS} }, $item);
@@ -1321,9 +1352,9 @@ sub updated {
 	$month = $day = $year = $updated;
 
 	print "updated is $updated\n" if ($localDebug);
-	if (!($updated =~ /\d\d\d\d-\d\d-\d\d/ )) {
-	    if (!($updated =~ /\d\d-\d\d-\d\d\d\d/ )) {
-		if (!($updated =~ /\d\d-\d\d-\d\d/ )) {
+	if (!($updated =~ /\d\d\d\d-\d\d-\d\d/o )) {
+	    if (!($updated =~ /\d\d-\d\d-\d\d\d\d/o )) {
+		if (!($updated =~ /\d\d-\d\d-\d\d/o )) {
 		    # my $filename = $HeaderDoc::headerObject->filename();
 		    my $filename = $self->filename();
 		    my $linenum = $self->linenum();
@@ -1331,9 +1362,9 @@ sub updated {
 		    print "Valid formats are MM-DD-YYYY, MM-DD-YY, and YYYY-MM-DD\n";
 		    return $self->{UPDATED};
 		} else {
-		    $month =~ s/(\d\d)-\d\d-\d\d/$1/smg;
-		    $day =~ s/\d\d-(\d\d)-\d\d/$1/smg;
-		    $year =~ s/\d\d-\d\d-(\d\d)/$1/smg;
+		    $month =~ s/(\d\d)-\d\d-\d\d/$1/smog;
+		    $day =~ s/\d\d-(\d\d)-\d\d/$1/smog;
+		    $year =~ s/\d\d-\d\d-(\d\d)/$1/smog;
 
 		    my $century;
 		    $century = `date +%C`;
@@ -1344,21 +1375,21 @@ sub updated {
 		}
 	    } else {
 		print "03-25-2003 case.\n" if ($localDebug);
-		    $month =~ s/(\d\d)-\d\d-\d\d\d\d/$1/smg;
-		    $day =~ s/\d\d-(\d\d)-\d\d\d\d/$1/smg;
-		    $year =~ s/\d\d-\d\d-(\d\d\d\d)/$1/smg;
+		    $month =~ s/(\d\d)-\d\d-\d\d\d\d/$1/smog;
+		    $day =~ s/\d\d-(\d\d)-\d\d\d\d/$1/smog;
+		    $year =~ s/\d\d-\d\d-(\d\d\d\d)/$1/smog;
 	    }
 	} else {
-		    $year =~ s/(\d\d\d\d)-\d\d-\d\d/$1/smg;
-		    $month =~ s/\d\d\d\d-(\d\d)-\d\d/$1/smg;
-		    $day =~ s/\d\d\d\d-\d\d-(\d\d)/$1/smg;
+		    $year =~ s/(\d\d\d\d)-\d\d-\d\d/$1/smog;
+		    $month =~ s/\d\d\d\d-(\d\d)-\d\d/$1/smog;
+		    $day =~ s/\d\d\d\d-\d\d-(\d\d)/$1/smog;
 	}
-	$month =~ s/\n*//smg;
-	$day =~ s/\n*//smg;
-	$year =~ s/\n*//smg;
-	$month =~ s/\s*//smg;
-	$day =~ s/\s*//smg;
-	$year =~ s/\s*//smg;
+	$month =~ s/\n*//smog;
+	$day =~ s/\n*//smog;
+	$year =~ s/\n*//smog;
+	$month =~ s/\s*//smog;
+	$day =~ s/\s*//smog;
+	$year =~ s/\s*//smog;
 
 	# Check the validity of the modification date
 
@@ -1435,7 +1466,7 @@ sub createFramesetFile {
     
     my $outputFile = "$outDir$pathSeparator$defaultFrameName";    
     my $rootFileName = $self->filename();
-    $rootFileName =~ s/(.*)\.h/$1/; 
+    $rootFileName =~ s/(.*)\.h/$1/o; 
     $rootFileName = &safeName(filename => $rootFileName);
     my $compositePageName = $self->compositePageName();
 
@@ -1492,7 +1523,7 @@ sub createTOCFile {
 	print OUTFILE "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\"\n    \"http://www.w3.org/TR/1998/REC-html40-19980424/loose.dtd\">\n";
 	print OUTFILE "<html>";
 
-	print OUTFILE $self->styleSheet();
+	print OUTFILE $self->styleSheet(1);
 
 	print OUTFILE "<head>\n    <title>Documentation for $title</title>\n	<meta name=\"generator\" content=\"HeaderDoc\">\n</head>\n";
 	print OUTFILE "<body bgcolor=\"#edf2f6\" link=\"#000099\" vlink=\"#660066\"\n";
@@ -1561,12 +1592,12 @@ sub createContentFile {
 	$HTMLmeta = $self->HTMLmeta();
     }
     if ($self->outputformat() eq "html") {
-	$HTMLmeta .= $self->styleSheet();
+	$HTMLmeta .= $self->styleSheet(0);
     }
 
     my $fileString = "";
 
-    $rootFileName =~ s/(.*)\.h/$1/; 
+    $rootFileName =~ s/(.*)\.h/$1/o; 
     # for now, always shorten long names since some files may be moved to a Mac for browsing
     if (1 || $isMacOS) {$rootFileName = &safeName(filename => $rootFileName);};
     my $outputFileName = "$rootFileName.html";    
@@ -1621,16 +1652,48 @@ sub createContentFile {
 	if (length($updated)) {      
 	    $fileString .= "<b>Updated:</b> $updated<br>\n";
 	}
+	my $includeList = "";
+	if ($class eq "HeaderDoc::Header") {
+	    my $includeref = $HeaderDoc::perHeaderIncludes{$filename};
+	    if ($includeref) {
+		my @includes = @{$includeref};
+
+		my $first = 1;
+		foreach my $include (@includes) {
+			my $localDebug = 0;
+			print "Included file: $include\n" if ($localDebug);
+
+			if (!$first) { $includeList .= ",\n"; }
+			my $xmlinc = $self->textToXML($include);
+
+			my $includeguts = $include;
+			$includeguts =~ s/[<\"](.*)[>\"]/$1/so;
+
+			my $includefile = basename($includeguts);
+
+			my $ref = $self->genRefSub("doc", "header", $includefile, "");
+
+			$includeList .= "<!-- a logicalPath=\"$ref\" -->$xmlinc<!-- /a -->";
+			$first = 0;
+		}
+
+		if (length($includeList)) {
+			$fileString .= "<b>Includes:</b> ";
+			$fileString .= $includeList;
+			$fileString .= "<br>\n";
+		}
+	    }
+	}
 	my $short_attributes = $self->getAttributes(0);
 	my $long_attributes = $self->getAttributes(1);
-	my $list_attributes = $self->getAttributeLists();
+	my $list_attributes = $self->getAttributeLists(0);
 	if (length($short_attributes)) {
 	        $fileString .= "$short_attributes";
 	}
 	if (length($list_attributes)) {
 	        $fileString .= "$list_attributes";
 	}
- 	if (length($updated) || length($availability) || length($namespace) || length($headerAbstract) || length($short_attributes) || length($list_attributes)) {
+ 	if (length($updated) || length($availability) || length($namespace) || length($headerAbstract) || length($short_attributes) || length($list_attributes) || length($includeList)) {
 	    $fileString .= "<p></p>\n";
 	    $fileString .= "<hr><br>\n";
 	}
@@ -1702,14 +1765,24 @@ sub writeHeaderElements {
     # pre-process everything to make sure we don't have any unregistered
     # api refs.
     my $junk = "";
-    if ($self->functions()) {$junk = $self->_getFunctionDetailString(0);}
-    if ($self->methods()) {$junk = $self->_getMethodDetailString(0);}
-    if ($self->constants()) {$junk = $self->_getConstantDetailString();}
-    if ($self->typedefs()) {$junk = $self->_getTypedefDetailString();}
-    if ($self->structs()) {$junk = $self->_getStructDetailString();}
-    if ($self->vars()) {$junk = $self->_getVarDetailString();}
-    if ($self->enums()) {$junk = $self->_getEnumDetailString();}
-    if ($self->pDefines()) {$junk = $self->_getPDefineDetailString();}
+    $HeaderDoc::ignore_apiuid_errors = 1;
+    my @functions = $self->functions();
+    my @methods = $self->methods();
+    my @constants = $self->constants();
+    my @typedefs = $self->typedefs();
+    my @structs = $self->structs();
+    my @vars = $self->vars();
+    my @enums = $self->enums();
+    my @pDefines = $self->pDefines();
+    if (@functions) { foreach my $obj (@functions) { $junk = $obj->apirefSetup();}}
+    if (@methods) { foreach my $obj (@methods) { $junk = $obj->apirefSetup();}}
+    if (@constants) { foreach my $obj (@constants) { $junk = $obj->apirefSetup();}}
+    if (@typedefs) { foreach my $obj (@typedefs) { $junk = $obj->apirefSetup();}}
+    if (@structs) { foreach my $obj (@structs) { $junk = $obj->apirefSetup();}}
+    if (@vars) { foreach my $obj (@vars) { $junk = $obj->apirefSetup();}}
+    if (@enums) { foreach my $obj (@enums) { $junk = $obj->apirefSetup();}}
+    if (@pDefines) { foreach my $obj (@pDefines) { $junk = $obj->apirefSetup();}}
+    $HeaderDoc::ignore_apiuid_errors = 0;
     
     if ($self->functions()) {
 		if (! -e $functionsDir) {
@@ -1766,14 +1839,55 @@ sub writeHeaderElements {
 }
 
 
+sub writeHeaderElementsToManPage {
+    my $self = shift;
+    my $class = ref($self);
+    my $compositePageName = $self->filename();
+    my $localDebug = 0;
+
+    $compositePageName =~ s/\.(h|i)$//o;
+    $compositePageName .= ".mxml";
+    my $rootOutputDir = $self->outputDir();
+    my $tempOutputDir = $rootOutputDir."/mantemp";
+    my $XMLPageString = $self->_getXMLPageString();
+
+    mkdir($tempOutputDir);
+
+    my $cwd = getcwd();
+    chdir($tempOutputDir);
+
+    open(OUTFILE, "|/usr/bin/hdxml2manxml");
+    print OUTFILE $XMLPageString;
+    print "WROTE: $XMLPageString\n" if ($localDebug);
+    close(OUTFILE);
+
+    my @files = <*.mxml>;
+
+    foreach my $file (@files) {
+	system("/usr/bin/xml2man $file");
+	unlink($file);
+    }
+
+    chdir($cwd);
+
+    @files = <${tempOutputDir}/*>;
+    foreach my $file (@files) {
+	my $filename = basename($file);
+	print "RENAMING $file to $rootOutputDir/$filename\n" if ($localDebug);
+	rename($file, "$rootOutputDir/$filename");
+    }
+    rmdir("$tempOutputDir");
+
+}
+
 sub writeHeaderElementsToXMLPage { # All API in a single XML page
     my $self = shift;
     my $class = ref($self);
     my $compositePageName = $self->filename();
-    $compositePageName =~ s/\.(h|i)$//;
+    $compositePageName =~ s/\.(h|i)$//o;
     $compositePageName .= ".xml";
     my $rootOutputDir = $self->outputDir();
-    my $name = $self->name();
+    my $name = $self->textToXML($self->name());
     my $XMLPageString = $self->_getXMLPageString();
     my $outputFile = $rootOutputDir.$pathSeparator.$compositePageName;
 # print "cpn = $compositePageName\n";
@@ -1791,7 +1905,7 @@ sub writeHeaderElementsToCompositePage { # All API in a single HTML page -- for 
     my $rootOutputDir = $self->outputDir();
     my $name = $self->name();
     my $compositePageString = $self->_getCompositePageString();
-    $compositePageString = $self->stripAppleRefs($compositePageString);
+    # $compositePageString = $self->stripAppleRefs($compositePageString);
     my $outputFile = $rootOutputDir.$pathSeparator.$compositePageName;
 
 	if (! -e $rootOutputDir) {
@@ -1806,6 +1920,8 @@ sub _getXMLPageString {
     my $name = $self->name();
     my $compositePageString;
     my $contentString;
+
+    return $self->XMLdocumentationBlock(0);
     
     my $abstract = $self->XMLabstract();
     if (length($abstract)) {
@@ -1814,29 +1930,13 @@ sub _getXMLPageString {
 	    $compositePageString .= "</abstract>\n";
     }
 
-
     my $discussion = $self->XMLdiscussion();
     if (length($discussion)) {
-	    $compositePageString .= "<discussion>";
+	    $compositePageString .= "<desc>";
 	    $compositePageString .= $discussion;
-	    $compositePageString .= "</discussion>\n";
+	    $compositePageString .= "</desc>\n";
     }
     
-    $contentString= $self->_getClassXMLDetailString();
-    if (length($contentString)) {
-		$contentString = $self->stripAppleRefs($contentString);
-	    $compositePageString .= $contentString;
-    }
-    $contentString= $self->_getCategoryXMLDetailString();
-    if (length($contentString)) {
-		$contentString = $self->stripAppleRefs($contentString);
-	    $compositePageString .= $contentString;
-    }
-    $contentString= $self->_getProtocolXMLDetailString();
-    if (length($contentString)) {
-		$contentString = $self->stripAppleRefs($contentString);
-	    $compositePageString .= $contentString;
-    }
     $contentString= $self->_getFunctionXMLDetailString();
     if (length($contentString)) {
 		$contentString = $self->stripAppleRefs($contentString);
@@ -1871,9 +1971,9 @@ sub _getXMLPageString {
     $contentString= $self->_getStructXMLDetailString();
     if (length($contentString)) {
 		$contentString = $self->stripAppleRefs($contentString);
-	    $compositePageString .= "<structs>";
+	    $compositePageString .= "<structs_and_unions>";
 	    $compositePageString .= $contentString;
-	    $compositePageString .= "</structs>\n";
+	    $compositePageString .= "</structs_and_unions>\n";
     }
     
     $contentString= $self->_getVarXMLDetailString();
@@ -1898,23 +1998,49 @@ sub _getXMLPageString {
 	    $compositePageString .= $contentString;
 	    $compositePageString .= "</defines>\n";
     }
-    # $compositePageString =~ s/^\<br\>\<br\>$//smg;
-    # $compositePageString =~ s/\<br\>/<br\/>/smg;
+
+    my $classContent = "";
+    $contentString= $self->_getClassXMLDetailString();
+    if (length($contentString)) {
+		$contentString = $self->stripAppleRefs($contentString);
+	    $classContent .= $contentString;
+    }
+    $contentString= $self->_getCategoryXMLDetailString();
+    if (length($contentString)) {
+		$contentString = $self->stripAppleRefs($contentString);
+	    $classContent .= $contentString;
+    }
+    $contentString= $self->_getProtocolXMLDetailString();
+    if (length($contentString)) {
+		$contentString = $self->stripAppleRefs($contentString);
+	    $classContent .= $contentString;
+    }
+
+    if (length($classContent)) {
+	$compositePageString .= "<classes>\n$classContent</classes>\n"
+    }
+
+
+    return $compositePageString;
+
+
+    # $compositePageString =~ s/^\<br\>\<br\>$//smog;
+    # $compositePageString =~ s/\<br\>/<br\/>/smog;
 
     # global substitutions
-    $compositePageString =~ s/\<h1\>//smig;
-    $compositePageString =~ s/\<\/h1\>//smig;
-    $compositePageString =~ s/\<h2\>//smig;
-    $compositePageString =~ s/\<\/h2\>//smig;
-    $compositePageString =~ s/\<h3\>//smig;
-    $compositePageString =~ s/\<\/h3\>//smig;
-    $compositePageString =~ s/\<hr\>//smig;
-    $compositePageString =~ s/\<br\>//smig;
-    $compositePageString =~ s/&lt;tt&gt;//smig;
-    $compositePageString =~ s/&lt;\/tt&gt;//smig;
-    $compositePageString =~ s/&lt;pre&gt;//smig;
-    $compositePageString =~ s/&lt;\/pre&gt;//smig;
-    $compositePageString =~ s/&nbsp;/ /smig;
+    $compositePageString =~ s/\<h1\>//smigo;
+    $compositePageString =~ s/\<\/h1\>//smigo;
+    $compositePageString =~ s/\<h2\>//smigo;
+    $compositePageString =~ s/\<\/h2\>//smigo;
+    $compositePageString =~ s/\<h3\>//smigo;
+    $compositePageString =~ s/\<\/h3\>//smigo;
+    $compositePageString =~ s/\<hr\>//smigo;
+    $compositePageString =~ s/\<br\>//smigo;
+    $compositePageString =~ s/&lt;tt&gt;//smigo;
+    $compositePageString =~ s/&lt;\/tt&gt;//smigo;
+    $compositePageString =~ s/&lt;pre&gt;//smigo;
+    $compositePageString =~ s/&lt;\/pre&gt;//smigo;
+    $compositePageString =~ s/&nbsp;/ /smigo;
 
     # note: in theory, the paragraph tag can be left open,
     # which could break XML parsers.  While this is common
@@ -1922,101 +2048,19 @@ sub _getXMLPageString {
     # headerdoc comments, so ignoring it for now.
 
     # case standardize tags.
-    $compositePageString =~ s/<ul>/<ul>/smig;
-    $compositePageString =~ s/<\/ul>/<\/ul>/smig;
-    $compositePageString =~ s/<ol>/<ol>/smig;
-    $compositePageString =~ s/<\/ol>/<\/ol>/smig;
-    $compositePageString =~ s/<li>/<li>/smig;
-    $compositePageString =~ s/<\/li>/<\/li>/smig;
-    $compositePageString =~ s/<b>/<b>/smig;
-    $compositePageString =~ s/<\/b>/<\/b>/smig;
-    $compositePageString =~ s/<i>/<i>/smig;
-    $compositePageString =~ s/<\/i>/<\/i>/smig;
+    $compositePageString =~ s/<ul>/<ul>/smigo;
+    $compositePageString =~ s/<\/ul>/<\/ul>/smigo;
+    $compositePageString =~ s/<ol>/<ol>/smigo;
+    $compositePageString =~ s/<\/ol>/<\/ol>/smigo;
+    $compositePageString =~ s/<li>/<li>/smigo;
+    $compositePageString =~ s/<\/li>/<\/li>/smigo;
+    $compositePageString =~ s/<b>/<b>/smigo;
+    $compositePageString =~ s/<\/b>/<\/b>/smigo;
+    $compositePageString =~ s/<i>/<i>/smigo;
+    $compositePageString =~ s/<\/i>/<\/i>/smigo;
 
-    my @compositearray = split(/<li>/i, $compositePageString);
-    my $newstring = "";
-
-    my $done_one = 0;
-    foreach my $listelement (@compositearray) {
-	# We depend on the fact that the page can't legally start with
-	# an <li> tag.  :-)
-	if (!($done_one)) {
-	    $done_one = 1;
-	    $newstring .= "$listelement";
-# print "first\n";
-	} else {
-# print "not first\n";
-	    if ($listelement =~ /<\/[uo]l>/i) {
-		$done_one = 0;
-		my $insert = 0;
-		if ($listelement =~ /^<\/[uo]l>/i) {
-			$done_one = 1; $insert = 1;
-		}
-		my @elementbits = split(/<\/[uo]l>/i, $listelement);
-		my $newelement = "";
-		foreach my $elementbit (@elementbits) {
-		    if ($done_one) {
-			if ($insert) {
-			    $newelement .= "</li>";
-			}
-			if ($listelement =~ /<\/ul>/i) {
-				$newelement .= "</ul>";
-			} else {
-				$newelement .= "</ol>";
-			}
-			$newelement .= "$elementbit";
-		    } else {
-			$done_one = 1;
-			if (!($listelement =~ /<\/li>/i)) {
-			    $insert = 1;
-			}
-			$newelement .= "$elementbit";
-		    }
-		}
-		$done_one = 1;
-		$listelement = $newelement;
-	    } else  {
-		if (!($listelement =~ /<\/li>/i)) {
-		    $listelement .= "</li>";
-		}
-	    }
-	    $newstring .= "<li>";
-	    $newstring .= "$listelement";
-	}
-    }
-
-    $compositePageString  = $newstring;
-
-    $newstring = "";
-    $done_one = 0;
-    my @compositearray = split(/(<p>)/i, $compositePageString);
-    foreach my $listelement (@compositearray) {
-	if (!$done_one) {
-		$done_one = 1;
-		$newstring .= $listelement;
-	} elsif ($listelement eq "<p>") {
-		$newstring .= $listelement;
-	} else {
-		if ($listelement =~ /^(.*?)<(.*?)>(.*)$/s) {
-			my $firstpart = $1;
-			my $tagpart = $2;
-			my $tailpart = $3;
-
-			if ($tagpart eq "/p") {
-				$newstring .= $listelement;
-			} elsif ($tagpart =~ /^\//) {
-				$newstring .= $firstpart;
-				$newstring .= "</p><" . $tagpart . ">";
-				$newstring .= $tailpart;
-			}
-		} else {
-			$newstring .= $listelement;
-			$newstring .= "</p>";
-		}
-	}
-    }
-
-    $compositePageString = $newstring;
+    # Disable this fixup code.
+    # $compositePageString = $newstring;
     
     return $compositePageString;
 }
@@ -2026,7 +2070,9 @@ sub _getCompositePageString {
     my $name = $self->name();
     my $compositePageString;
     my $contentString;
-    
+
+    $compositePageString .= $self->compositePageAPIRef();
+
     my $abstract = $self->abstract();
     if (length($abstract)) {
 	    $compositePageString .= "<h2>Abstract</h2>\n";
@@ -2039,61 +2085,68 @@ sub _getCompositePageString {
 	    $compositePageString .= $discussion;
     }
     
-    if ((length($abstract)) || (length($discussion))) {
+    # if ((length($abstract)) || (length($discussion))) {
+    # ALWAYS....
 	    $compositePageString .= "<hr><br>";
+    # }
+
+    my $etoc = $self->_getClassEmbeddedTOC(1);
+    if (length($etoc)) {
+	$compositePageString .= $etoc;
+	$compositePageString .= "<hr><br>";
     }
 
     $contentString= $self->_getFunctionDetailString(1);
     if (length($contentString)) {
 	    $compositePageString .= "<h2>Functions</h2>\n";
-		$contentString = $self->stripAppleRefs($contentString);
+		# $contentString = $self->stripAppleRefs($contentString);
 	    $compositePageString .= $contentString;
     }
     $contentString= $self->_getMethodDetailString(1);
     if (length($contentString)) {
 	    $compositePageString .= "<h2>Methods</h2>\n";
-		$contentString = $self->stripAppleRefs($contentString);
+		# $contentString = $self->stripAppleRefs($contentString);
 	    $compositePageString .= $contentString;
     }
     
-    $contentString= $self->_getConstantDetailString();
+    $contentString= $self->_getConstantDetailString(1);
     if (length($contentString)) {
 	    $compositePageString .= "<h2>Constants</h2>\n";
-		$contentString = $self->stripAppleRefs($contentString);
+		# $contentString = $self->stripAppleRefs($contentString);
 	    $compositePageString .= $contentString;
     }
     
-    $contentString= $self->_getTypedefDetailString();
+    $contentString= $self->_getTypedefDetailString(1);
     if (length($contentString)) {
 	    $compositePageString .= "<h2>Typedefs</h2>\n";
-		$contentString = $self->stripAppleRefs($contentString);
+		# $contentString = $self->stripAppleRefs($contentString);
 	    $compositePageString .= $contentString;
     }
     
-    $contentString= $self->_getStructDetailString();
+    $contentString= $self->_getStructDetailString(1);
     if (length($contentString)) {
 	    $compositePageString .= "<h2>Structs and Unions</h2>\n";
-		$contentString = $self->stripAppleRefs($contentString);
+		# $contentString = $self->stripAppleRefs($contentString);
 	    $compositePageString .= $contentString;
     }
     
-    $contentString= $self->_getVarDetailString();
+    $contentString= $self->_getVarDetailString(1);
     if (length($contentString)) {
 	    $compositePageString .= "<h2>Globals</h2>\n";
-		$contentString = $self->stripAppleRefs($contentString);
+		# $contentString = $self->stripAppleRefs($contentString);
 	    $compositePageString .= $contentString;
     }
     
-    $contentString = $self->_getEnumDetailString();
+    $contentString = $self->_getEnumDetailString(1);
     if (length($contentString)) {
             $compositePageString .= "<h2>Enumerations</h2>\n";
             $compositePageString .= $contentString;
     }
     
-    $contentString= $self->_getPDefineDetailString();
+    $contentString= $self->_getPDefineDetailString(1);
     if (length($contentString)) {
 	    $compositePageString .= "<h2>#defines</h2>\n";
-		$contentString = $self->stripAppleRefs($contentString);
+		# $contentString = $self->stripAppleRefs($contentString);
 	    $compositePageString .= $contentString;
     }
     return $compositePageString;
@@ -2111,6 +2164,53 @@ sub stripAppleRefs {
 	$apiUIDPrefix = quote($apiUIDPrefix);
 	$string =~ s|<a\s+name\s*=\s*\"//$apiUIDPrefix/[^"]+?\">(.*?)<\s*/a\s*>|$1|g;
 	return $string;
+}
+
+sub compositePageAPIRef
+{
+    my $self = shift;
+    my $name = $self->name();
+
+    my $uid = $self->compositePageAPIUID();
+    my $apiref = "<a name=\"$uid\" title=\"$name\"></a>\n";
+
+    return $apiref;
+}
+
+sub compositePageAPIUID
+{
+    my $self = shift;
+    my $class = ref($self) || $self;
+    my $apiUIDPrefix = HeaderDoc::APIOwner->apiUIDPrefix();
+    my $type = "header";
+
+    SWITCH : {
+	($class eq "HeaderDoc::CPPClass") && do {
+		$type = "class";
+	    };
+	($class eq "HeaderDoc::ObjCCategory") && do {
+		$type = "class";
+	    };
+	($class eq "HeaderDoc::ObjCClass") && do {
+		$type = "class";
+	    };
+	($class eq "HeaderDoc::ObjCContainer") && do {
+		$type = "class";
+	    };
+	($class eq "HeaderDoc::ObjCProtocol") && do {
+		$type = "protocol";
+	    };
+    }
+    my $shortname = $self->name();
+    if ($class eq "HeaderDoc::Header") {
+	$shortname = $self->filename();
+	$shortname =~ s/\.hdoc$//so;
+    }
+    $shortname = sanitize($shortname);
+
+    my $apiuid = "//$apiUIDPrefix/doc/$type/$shortname";
+
+    return $apiuid
 }
 
 sub writeFunctions {
@@ -2134,7 +2234,7 @@ sub _getFunctionDetailString {
 	@tempobjs = @funcObjs;
     }
     foreach my $obj (@tempobjs) {
-        my $documentationBlock = $obj->documentationBlock();
+        my $documentationBlock = $obj->documentationBlock($composite);
         $contentString .= $documentationBlock;
     }
     return $contentString;
@@ -2229,6 +2329,7 @@ sub _getEmbeddedTOC
     my $typeFile = shift;
     my $tag = shift;
     my $compositePage = shift;
+    my $includeObjectName = shift;
     my $localDebug = 0;
 
     print "CPAGE: $compositePage\n" if ($localDebug);
@@ -2239,12 +2340,22 @@ sub _getEmbeddedTOC
     my $localDebug = 0;
     my $compositePageName = $self->compositePageName();
 
-    $eTOCString .= "<a name=\"HeaderDoc_$tag\"></a>\n";
+    if ($includeObjectName) {
+	$eTOCString .= "<h2>$tag</h2>\n";
+    } else {
+	$eTOCString .= "<a name=\"HeaderDoc_$tag\"></a>\n";
+    }
 
     print "My class is $class\n" if ($localDebug);
 
-    if (!@objlist) { return ""; }
-    if (!($#objlist)) { return ""; }
+    if (!scalar(@objlist)) {
+	print "empty objlist\n" if ($localDebug);
+	return "";
+    }
+    # if (!($#objlist)) {
+	# print "empty objlist\n" if ($localDebug);
+	# return "";
+    # }
 
     $eTOCString .= "<dl>\n";
     foreach my $obj (@objlist) {
@@ -2259,10 +2370,22 @@ sub _getEmbeddedTOC
 	if ($class eq "HeaderDoc::Header") { $composite = 0; }
 	if ($compositePage) { $composite = 1; $target = "_top"; }
 
-	if ($composite) {
-	    $url = "$compositePageName#$name"
+	my $safeName = $name;
+	$safeName = &safeName(filename => $name);
+
+	my $urlname = $obj->apiuid(); # sanitize($name);
+	if ($composite && !$HeaderDoc::ClassAsComposite) {
+		$urlname = $obj->compositePageUID();
+	}
+
+	if ($includeObjectName && $composite) {
+	    $url = "$typeFile/$safeName/$compositePageName#$urlname";
+	} elsif ($includeObjectName) {
+	    $url = "$typeFile/$safeName/index.html#$urlname";
+	} elsif ($composite) {
+	    $url = "$compositePageName#$urlname"
 	} else {
-	    $url = "$typeFile#$name"
+	    $url = "$typeFile#$urlname"
 	}
 
 	my $parentclass = $obj->origClass();
@@ -2282,12 +2405,102 @@ print "etoc: $eTOCString\n" if ($localDebug);
     return $eTOCString;
 }
 
+sub _getClassEmbeddedTOC
+{
+    my $self = shift;
+    my $composite = shift;
+    my @possclasses = $self->classes();
+    my @protocols = $self->protocols();
+    my @categories = $self->categories();
+    my $localDebug = 0;
+
+    my $retval = "";
+
+    print "getClassEmbeddedTOC: processing ".$self->name()."\n" if ($localDebug);
+
+    my @classes = ();
+    my @comints = ();
+
+    foreach my $class (@possclasses) {
+	if ($class->isCOMInterface()) {
+	    push(@comints, $class);
+	} else  {
+	    push(@classes, $class);
+	}
+    }
+
+    if (scalar(@classes)) {
+	print "getClassEmbeddedTOC: classes found.\n" if ($localDebug);
+	my @tempobjs = ();
+	if ($HeaderDoc::sort_entries) {
+		@tempobjs = sort objName @classes;
+	} else {
+		@tempobjs = @classes;
+	}
+	if ($localDebug) {
+		foreach my $item(@tempobjs) {
+			print "TO: $item : ".$item->name()."\n";
+		}
+	}
+	$retval .= $self->_getEmbeddedTOC(\@tempobjs, "Classes", "Classes", $composite, 1);
+    }
+    if (scalar(@comints)) {
+	print "getClassEmbeddedTOC: comints found.\n" if ($localDebug);
+	my @tempobjs = ();
+	if ($HeaderDoc::sort_entries) {
+		@tempobjs = sort objName @comints;
+	} else {
+		@tempobjs = @comints;
+	}
+	if ($localDebug) {
+		foreach my $item(@tempobjs) {
+			print "TO: $item : ".$item->name()."\n";
+		}
+	}
+	$retval .= $self->_getEmbeddedTOC(\@tempobjs, "Classes", "COM Interfaces", $composite, 1);
+    }
+    if (scalar(@protocols)) {
+	print "getClassEmbeddedTOC: protocols found.\n" if ($localDebug);
+	my @tempobjs = ();
+	if ($HeaderDoc::sort_entries) {
+		@tempobjs = sort objName @protocols;
+	} else {
+		@tempobjs = @protocols;
+	}
+	if ($localDebug) {
+		foreach my $item(@tempobjs) {
+			print "TO: $item : ".$item->name()."\n";
+		}
+	}
+	$retval .= $self->_getEmbeddedTOC(\@tempobjs, "Protocols", "Protocols", $composite, 1);
+    }
+    if (scalar(@categories)) {
+	print "getClassEmbeddedTOC: categories found.\n" if ($localDebug);
+	my @tempobjs = ();
+	if ($HeaderDoc::sort_entries) {
+		@tempobjs = sort objName @categories;
+	} else {
+		@tempobjs = @categories;
+	}
+	if ($localDebug) {
+		foreach my $item(@tempobjs) {
+			print "TO: $item : ".$item->name()."\n";
+		}
+	}
+	$retval .= $self->_getEmbeddedTOC(\@tempobjs, "Categories", "Categories", $composite, 1);
+    }
+
+    print "eClassTOC = $retval\n" if ($localDebug);
+
+   return $retval;
+}
+
 sub _getFunctionEmbeddedTOC
 {
    my $self = shift;
    my $composite = shift;
    my @functions = $self->functions();
-   return $self->_getEmbeddedTOC(\@functions, "Functions.html", "functions", $composite);
+   return $self->_getEmbeddedTOC(\@functions, "Functions.html", "functions", $composite, 0);
 }
 
 sub _getMethodEmbeddedTOC
@@ -2295,7 +2508,7 @@ sub _getMethodEmbeddedTOC
    my $self = shift;
    my $composite = shift;
    my @methods = $self->methods();
-   return $self->_getEmbeddedTOC(\@methods, "Methods.html", "methods", $composite);
+   return $self->_getEmbeddedTOC(\@methods, "Methods.html", "methods", $composite, 0);
 }
 
 sub _getMethodDetailString {
@@ -2314,7 +2527,7 @@ sub _getMethodDetailString {
 	@tempobjs = @methObjs;
     }
     foreach my $obj (@tempobjs) {
-        my $documentationBlock = $obj->documentationBlock();
+        my $documentationBlock = $obj->documentationBlock($composite);
         $contentString .= $documentationBlock;
     }
     return $contentString;
@@ -2341,11 +2554,12 @@ sub _getMethodXMLDetailString {
 sub writeConstants {
     my $self = shift;
     my $constantsFile = $self->constantsDir().$pathSeparator."Constants.html";
-    $self->_createHTMLOutputFile($constantsFile, $self->_getConstantDetailString(), "Constants");
+    $self->_createHTMLOutputFile($constantsFile, $self->_getConstantDetailString(0), "Constants");
 }
 
 sub _getConstantDetailString {
     my $self = shift;
+    my $composite = shift;
     my @constantObjs = $self->constants();
     my $contentString;
 
@@ -2356,7 +2570,7 @@ sub _getConstantDetailString {
 	@tempobjs = @constantObjs;
     }
     foreach my $obj (@tempobjs) {
-        my $documentationBlock = $obj->documentationBlock();
+        my $documentationBlock = $obj->documentationBlock($composite);
         $contentString .= $documentationBlock;
     }
     return $contentString;
@@ -2383,11 +2597,12 @@ sub _getConstantXMLDetailString {
 sub writeTypedefs {
     my $self = shift;
     my $typedefsFile = $self->datatypesDir().$pathSeparator."DataTypes.html";
-    $self->_createHTMLOutputFile($typedefsFile, $self->_getTypedefDetailString(), "Defined Types");
+    $self->_createHTMLOutputFile($typedefsFile, $self->_getTypedefDetailString(0), "Defined Types");
 }
 
 sub _getTypedefDetailString {
     my $self = shift;
+    my $composite = shift;
     my @typedefObjs = $self->typedefs();
     my $contentString;
 
@@ -2398,7 +2613,7 @@ sub _getTypedefDetailString {
 	@tempobjs = @typedefObjs;
     }
     foreach my $obj (@tempobjs) {
-        my $documentationBlock = $obj->documentationBlock();
+        my $documentationBlock = $obj->documentationBlock($composite);
         $contentString .= $documentationBlock;
     }
     return $contentString;
@@ -2425,11 +2640,12 @@ sub _getTypedefXMLDetailString {
 sub writeStructs {
     my $self = shift;
     my $structsFile = $self->structsDir().$pathSeparator."Structs.html";
-    $self->_createHTMLOutputFile($structsFile, $self->_getStructDetailString(), "Structs");
+    $self->_createHTMLOutputFile($structsFile, $self->_getStructDetailString(0), "Structs");
 }
 
 sub _getStructDetailString {
     my $self = shift;
+    my $composite = shift;
     my @structObjs = $self->structs();
     my $contentString;
 
@@ -2440,7 +2656,7 @@ sub _getStructDetailString {
 	@tempobjs = @structObjs;
     }
     foreach my $obj (@tempobjs) {
-        my $documentationBlock = $obj->documentationBlock();
+        my $documentationBlock = $obj->documentationBlock($composite);
         $contentString .= $documentationBlock;
     }
     return $contentString;
@@ -2467,11 +2683,12 @@ sub _getStructXMLDetailString {
 sub writeVars {
     my $self = shift;
     my $varsFile = $self->varsDir().$pathSeparator."Vars.html";
-    $self->_createHTMLOutputFile($varsFile, $self->_getVarDetailString(), "Data Members");
+    $self->_createHTMLOutputFile($varsFile, $self->_getVarDetailString(0), "Data Members");
 }
 
 sub _getVarDetailString {
     my $self = shift;
+    my $composite = shift;
     my @varObjs = $self->vars();
     my $contentString;
     my @tempobjs = ();
@@ -2481,7 +2698,7 @@ sub _getVarDetailString {
 	@tempobjs = @varObjs;
     }
     foreach my $obj (@tempobjs) {
-        my $documentationBlock = $obj->documentationBlock();
+        my $documentationBlock = $obj->documentationBlock($composite);
         $contentString .= $documentationBlock;
     }
     return $contentString;
@@ -2508,11 +2725,12 @@ sub _getVarXMLDetailString {
 sub writeEnums {
     my $self = shift;
     my $enumsFile = $self->enumsDir().$pathSeparator."Enums.html";
-    $self->_createHTMLOutputFile($enumsFile, $self->_getEnumDetailString(), "Enumerations");
+    $self->_createHTMLOutputFile($enumsFile, $self->_getEnumDetailString(0), "Enumerations");
 }
 
 sub _getEnumDetailString {
     my $self = shift;
+    my $composite = shift;
     my @enumObjs = $self->enums();
     my $contentString;
 
@@ -2523,7 +2741,7 @@ sub _getEnumDetailString {
 	@tempobjs = @enumObjs;
     }
     foreach my $obj (@tempobjs) {
-        my $documentationBlock = $obj->documentationBlock();
+        my $documentationBlock = $obj->documentationBlock($composite);
         $contentString .= $documentationBlock;
     }
     return $contentString;
@@ -2550,11 +2768,12 @@ sub _getEnumXMLDetailString {
 sub writePDefines {
     my $self = shift;
     my $pDefinesFile = $self->pDefinesDir().$pathSeparator."PDefines.html";
-    $self->_createHTMLOutputFile($pDefinesFile, $self->_getPDefineDetailString(), "#defines");
+    $self->_createHTMLOutputFile($pDefinesFile, $self->_getPDefineDetailString(0), "#defines");
 }
 
 sub _getPDefineDetailString {
     my $self = shift;
+    my $composite = shift;
     my @pDefineObjs = $self->pDefines();
     my $contentString;
 
@@ -2565,7 +2784,7 @@ sub _getPDefineDetailString {
 	@tempobjs = @pDefineObjs;
     }
     foreach my $obj (@tempobjs) {
-        my $documentationBlock = $obj->documentationBlock();
+        my $documentationBlock = $obj->documentationBlock($composite);
         $contentString .= $documentationBlock;
     }
     return $contentString;
@@ -2660,8 +2879,8 @@ sub _getFunctionsAndParamsExportString {
         # headerDoc2HTML already changes two \n's to \n<br><br>\n, so we'll
         # just remove the breaks
         foreach my $string ($desc, $abstract, $declaration, $result) {
-     		$string =~ s/\n<br><br>\n/\n\n/g;
-     		$string =~ s/([^\n])\n([^\n])/$1 $2/g;
+     		$string =~ s/\n<br><br>\n/\n\n/go;
+     		$string =~ s/([^\n])\n([^\n])/$1 $2/go;
         }
         $tmpString = $managerID.$sep.$funcID.$sep.$funcName.$sep.$funcEnglishName.$sep.$abstract.$sep.$desc.$sep.$result.$sep.$specialConsiderations.$sep.$versionNotes.$sep.$groupName.$sep.$order;
         $tmpString = &convertCharsForFileMaker($tmpString);
@@ -2701,8 +2920,8 @@ sub _getFunctionsAndParamsExportString {
 		        }
 	        	my $paramName = $taggedParam->name();
 	        	my $disc = $taggedParam->discussion();
-	     		$disc =~ s/\n<br><br>\n/\n\n/g;
-	     		$disc =~ s/([^\n])\n([^\n])/$1 $2/g;
+	     		$disc =~ s/\n<br><br>\n/\n\n/go;
+	     		$disc =~ s/([^\n])\n([^\n])/$1 $2/go;
 	        	my $tmpParamString = "";
 	        	
 	        	$tmpParamString = $funcID.$sep.$funcName.$sep.$pos.$sep.$disc.$sep.$sep.$sep.$paramName.$sep.$type;
@@ -2756,8 +2975,8 @@ sub _getMethodsAndParamsExportString {
         # headerDoc2HTML already changes two \n's to \n<br><br>\n, so we'll
         # just remove the breaks
         foreach my $string ($desc, $abstract, $declaration, $result) {
-     		$string =~ s/\n<br><br>\n/\n\n/g;
-     		$string =~ s/([^\n])\n([^\n])/$1 $2/g;
+     		$string =~ s/\n<br><br>\n/\n\n/go;
+     		$string =~ s/([^\n])\n([^\n])/$1 $2/go;
         }
         $tmpString = $managerID.$sep.$methID.$sep.$methName.$sep.$methEnglishName.$sep.$abstract.$sep.$desc.$sep.$result.$sep.$specialConsiderations.$sep.$versionNotes.$sep.$groupName.$sep.$order;
         $tmpString = &convertCharsForFileMaker($tmpString);
@@ -2796,8 +3015,8 @@ sub _getMethodsAndParamsExportString {
 		        }
 	        	my $paramName = $taggedParam->name();
 	        	my $disc = $taggedParam->discussion();
-	     		$disc =~ s/\n<br><br>\n/\n\n/g;
-	     		$disc =~ s/([^\n])\n([^\n])/$1 $2/g;
+	     		$disc =~ s/\n<br><br>\n/\n\n/go;
+	     		$disc =~ s/([^\n])\n([^\n])/$1 $2/go;
 	        	my $tmpParamString = "";
 	        	
 	        	$tmpParamString = $methID.$sep.$methName.$sep.$pos.$sep.$disc.$sep.$sep.$sep.$paramName.$sep.$type;
@@ -2853,8 +3072,8 @@ sub _getDataTypesAndFieldsExportString {
         # headerDoc2HTML already changes two \n's to \n<br><br>\n, so we'll
         # just remove the breaks
         foreach my $string ($desc, $abstract, $declaration) {
-     		$string =~ s/\n<br><br>\n/\n\n/g;
-     		$string =~ s/([^\n])\n([^\n])/$1 $2/g;
+     		$string =~ s/\n<br><br>\n/\n\n/go;
+     		$string =~ s/([^\n])\n([^\n])/$1 $2/go;
         }
         $tmpString = $enumID.$sep.$name.$sep.$englishName.$sep.$abstract.$sep.$desc.$sep.$specialConsiderations.$sep.$versionNotes."\n";
         $tmpString = &convertCharsForFileMaker($tmpString);
@@ -2878,8 +3097,8 @@ sub _getDataTypesAndFieldsExportString {
         # headerDoc2HTML already changes two \n's to \n<br><br>\n, so we'll
         # just remove the breaks
         foreach my $string ($desc, $abstract) {
-     		$string =~ s/\n<br><br>\n/\n\n/g;
-     		$string =~ s/([^\n])\n([^\n])/$1 $2/g;
+     		$string =~ s/\n<br><br>\n/\n\n/go;
+     		$string =~ s/([^\n])\n([^\n])/$1 $2/go;
         }
         $tmpString = $constID.$sep.$name.$sep.$englishName.$sep.$abstract.$sep.$desc.$sep.$specialConsiderations.$sep.$versionNotes."\n";
         $tmpString = &convertCharsForFileMaker($tmpString);
@@ -2905,8 +3124,8 @@ sub _getDataTypesAndFieldsExportString {
         # headerDoc2HTML already changes two \n's to \n<br><br>\n, so we'll
         # just remove the breaks
         foreach my $string ($desc, $abstract, $declaration) {
-     		$string =~ s/\n<br><br>\n/\n\n/g;
-     		$string =~ s/([^\n])\n([^\n])/$1 $2/g;
+     		$string =~ s/\n<br><br>\n/\n\n/go;
+     		$string =~ s/([^\n])\n([^\n])/$1 $2/go;
         }
         $tmpString = $structID.$sep.$name.$sep.$englishName.$sep.$abstract.$sep.$desc.$sep.$specialConsiderations.$sep.$versionNotes."\n";
         $tmpString = &convertCharsForFileMaker($tmpString);
@@ -2917,8 +3136,8 @@ sub _getDataTypesAndFieldsExportString {
         	foreach my $field (@fields) {
         	    my $fName = $field->name();
         	    my $discussion = $field->discussion();
-	     		$discussion =~ s/\n<br><br>\n/\n\n/g;
-	     		$discussion =~ s/([^\n])\n([^\n])/$1 $2/g;
+	     		$discussion =~ s/\n<br><br>\n/\n\n/go;
+	     		$discussion =~ s/([^\n])\n([^\n])/$1 $2/go;
         	    my $pos = 0;
         	    
         	    $pos = $self->_positionOfNameInBlock($fName, $declaration);
@@ -2960,8 +3179,8 @@ sub _getDataTypesAndFieldsExportString {
         # headerDoc2HTML already changes two \n's to \n<br><br>\n, so we'll
         # just remove the breaks
         foreach my $string ($desc, $abstract, $declaration) {
-     		$string =~ s/\n<br><br>\n/\n\n/g;
-     		$string =~ s/([^\n])\n([^\n])/$1 $2/g;
+     		$string =~ s/\n<br><br>\n/\n\n/go;
+     		$string =~ s/([^\n])\n([^\n])/$1 $2/go;
         }
         $tmpString = $typedefID.$sep.$name.$sep.$englishName.$sep.$abstract.$sep.$desc.$sep.$specialConsiderations.$sep.$versionNotes."\n";
         $tmpString = &convertCharsForFileMaker($tmpString);
@@ -2971,8 +3190,8 @@ sub _getDataTypesAndFieldsExportString {
         	foreach my $field (@fields) {
         	    my $fName = $field->name();
         	    my $discussion = $field->discussion();
-	     		$discussion =~ s/\n<br><br>\n/\n\n/g;
-	     		$discussion =~ s/([^\n])\n([^\n])/$1 $2/g;
+	     		$discussion =~ s/\n<br><br>\n/\n\n/go;
+	     		$discussion =~ s/([^\n])\n([^\n])/$1 $2/go;
         	    my $pos = 0;
         	    
         	    if ($isFunctionPointer) {
@@ -3035,8 +3254,8 @@ sub _getEnumeratorsExportString {
         	    my $discussion = $enumerator->discussion();
         	    my $pos = 0;
         	    
-	     		$discussion =~ s/\n<br><br>\n/\n\n/g;
-	     		$discussion =~ s/([^\n])\n([^\n])/$1 $2/g;
+	     		$discussion =~ s/\n<br><br>\n/\n\n/go;
+	     		$discussion =~ s/([^\n])\n([^\n])/$1 $2/go;
         	    $pos = $self->_positionOfNameInEnum($fName, $declaration);
 		        if (!$pos) {
 				# my $filename = $HeaderDoc::headerObject->name();
@@ -3066,7 +3285,7 @@ sub _positionOfNameInBlock {
     my $self = shift;
     my $name = shift;    
     my $block = shift;
-    $block =~ s/\n/ /g;
+    $block =~ s/\n/ /go;
     
     my $pos = 0;
     my $i = 0;
@@ -3086,7 +3305,7 @@ sub _positionOfNameInEnum {
     my $self = shift;
     my $name = shift;    
     my $block = shift;
-    $block =~ s/\n/ /g;
+    $block =~ s/\n/ /go;
     
     my $pos = 0;
     my $i = 0;
@@ -3106,7 +3325,7 @@ sub _positionOfNameInFuncPtrDec {
     my $self = shift;
     my $name = shift;    
     my $dec = shift;
-    $dec =~ s/\n/ /g;
+    $dec =~ s/\n/ /go;
     
     my @decParts = split (/\(/, $dec);
     my $paramList = pop @decParts;
@@ -3130,7 +3349,7 @@ sub _positionOfNameInMethPtrDec {
     my $self = shift;
     my $name = shift;    
     my $dec = shift;
-    $dec =~ s/\n/ /g;
+    $dec =~ s/\n/ /go;
     
     my @decParts = split (/\(/, $dec);
     my $paramList = pop @decParts;
@@ -3155,7 +3374,7 @@ sub _createExportFile {
     my $fileString = shift;    
 
 	open(OUTFILE, ">$outputFile") || die "Can't write $outputFile.\n";
-    if ($^O =~ /MacOS/i) {MacPerl::SetFileInfo('R*ch', 'TEXT', "$outputFile");};
+    if ($^O =~ /MacOS/io) {MacPerl::SetFileInfo('R*ch', 'TEXT', "$outputFile");};
 	print OUTFILE $fileString;
 	close OUTFILE;
 }
@@ -3163,18 +3382,18 @@ sub _createExportFile {
 sub _createXMLOutputFile {
     my $self = shift;
     my $class = ref($self);
-    my $copyrightOwner = $class->copyrightOwner();
+    # my $copyrightOwner = $self->htmlToXML($class->copyrightOwner());
     my $outputFile = shift;    
     my $orig_fileString = shift;    
     my $heading = shift;
     my $fullpath = $self->fullpath();
 
-    if ($class eq "HeaderDoc::Header") {
-	my $headercopyright = $self->headerCopyrightOwner();
-	if (!($headercopyright eq "")) {
-	    $copyrightOwner = $headercopyright;
-	}
-    }
+    # if ($class eq "HeaderDoc::Header") {
+	# my $headercopyright = $self->htmlToXML($self->headerCopyrightOwner());
+	# if (!($headercopyright eq "")) {
+	    # $copyrightOwner = $headercopyright;
+	# }
+    # }
 
     my $HTMLmeta = "";
     if ($class eq "HeaderDoc::Header") {
@@ -3185,10 +3404,12 @@ sub _createXMLOutputFile {
 	my $fileString = $self->xml_fixup_links($orig_fileString);
 
 	open(OUTFILE, ">$outputFile") || die "Can't write $outputFile.\n";
-    if ($^O =~ /MacOS/i) {MacPerl::SetFileInfo('MSIE', 'TEXT', "$outputFile");};
+    if ($^O =~ /MacOS/io) {MacPerl::SetFileInfo('MSIE', 'TEXT', "$outputFile");};
 	print OUTFILE "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-	print OUTFILE "<header filename=\"$heading\" headerpath=\"$fullpath\" headerclass=\"\">";
-	print OUTFILE "<title>$heading</title>\n";
+	# print OUTFILE "<!DOCTYPE header PUBLIC \"-//Apple Computer//DTD HEADERDOC 1.0//EN\" \"http://www.apple.com/DTDs/HeaderDoc-1.0.dtd\">\n";
+	print OUTFILE "<!DOCTYPE header PUBLIC \"-//Apple Computer//DTD HEADERDOC 1.0//EN\" \"/System/Library/DTDs/HeaderDoc-1.0.dtd\">\n";
+	# print OUTFILE "<header filename=\"$heading\" headerpath=\"$fullpath\" headerclass=\"\">";
+	# print OUTFILE "<name>$heading</name>\n";
 
 	# Need to get the C++ Class Abstract and Discussion....
 	# my $headerDiscussion = $self->discussion();   
@@ -3198,9 +3419,9 @@ sub _createXMLOutputFile {
 	# print OUTFILE "<discussion>$headerDiscussion</discussion>\n";
 
 	print OUTFILE $fileString;
-	print OUTFILE "<copyrightinfo>&#169; $copyrightOwner</copyrightinfo>" if (length($copyrightOwner));
-	print OUTFILE "<timestamp>$dateStamp</timestamp>\n";
-	print OUTFILE "</header>";
+	# print OUTFILE "<copyrightinfo>&#169; $copyrightOwner</copyrightinfo>" if (length($copyrightOwner));
+	# print OUTFILE "<timestamp>$dateStamp</timestamp>\n";
+	# print OUTFILE "</header>";
 	close OUTFILE;
 }
 
@@ -3228,11 +3449,11 @@ sub _createHTMLOutputFile {
 	my $fileString = html_fixup_links($self, $orig_fileString);
 
 	open(OUTFILE, ">$outputFile") || die "Can't write $outputFile.\n";
-    if ($^O =~ /MacOS/i) {MacPerl::SetFileInfo('MSIE', 'TEXT', "$outputFile");};
+    if ($^O =~ /MacOS/io) {MacPerl::SetFileInfo('MSIE', 'TEXT', "$outputFile");};
 	print OUTFILE "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\"\n    \"http://www.w3.org/TR/1998/REC-html40-19980424/loose.dtd\">\n";
 	print OUTFILE "<html>";
 
-	print OUTFILE $self->styleSheet();
+	print OUTFILE $self->styleSheet(0);
 
 	print OUTFILE "<head>\n    <title>$heading</title>\n	$HTMLmeta <meta name=\"generator\" content=\"HeaderDoc\">\n";
 	print OUTFILE "</head><body bgcolor=\"#ffffff\">\n";
@@ -3350,12 +3571,12 @@ sub fixup_links
 	$linkprefix .= "../";
 	$count--;
     }
-    $linkprefix =~ s/\/$//;
-    $string =~ s/\@\@docroot/$linkprefix/sg;
+    $linkprefix =~ s/\/$//o;
+    $string =~ s/\@\@docroot/$linkprefix/sgo;
 
     my @elements = split(/</, $string);
     foreach my $element (@elements) {
-	if ($element =~ /^hd_link (.*?)>/) {
+	if ($element =~ /^hd_link posstarget=\"(.*?)\">/o) {
 	    # print "found.\n";
 	    my $oldtarget = $1;
 	    my $newtarget = $oldtarget;
@@ -3369,10 +3590,10 @@ sub fixup_links
 	    }
 
 	    # print "element is $element\n";
-	    $element =~ s/^hd_link.*?>\s?//;
+	    $element =~ s/^hd_link.*?>\s?//o;
 	    # print "link name is $element\n";
 	    if ($mode) {
-		if ($newtarget =~ /logicalPath=\".*\"/) {
+		if ($newtarget =~ /logicalPath=\".*\"/o) {
 			$ret .= "<hd_link $newtarget>";
 		} else {
 			$ret .= "<hd_link logicalPath=\"$newtarget\">";
@@ -3395,7 +3616,7 @@ sub fixup_links
 		# }
 	    }
 	} else {
-	    if ($element =~ s/^\/hd_link>//) {
+	    if ($element =~ s/^\/hd_link>//o) {
 		if ($mode) {
 		    $ret .= "</hd_link>";
 		} else {
@@ -3407,7 +3628,7 @@ sub fixup_links
 	    }
 	}
     }
-    $ret =~ s/^<//;
+    $ret =~ s/^<//o;
 
     return $ret;
 }

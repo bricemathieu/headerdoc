@@ -6,7 +6,7 @@
 # Initial modifications: SKoT McDonald <skot@tomandandy.com> Aug 2001
 #
 # Based on CPPClass by Matt Morse (matt@apple.com)
-# Last Updated: $Date: 2004/02/09 19:35:19 $
+# Last Updated: $Date: 2004/06/10 22:12:16 $
 # 
 # Copyright (c) 1999-2004 Apple Computer, Inc.  All rights reserved.
 #
@@ -50,7 +50,7 @@ $VERSION = '1.20';
 ################ Portability ###################################
 my $isMacOS;
 my $pathSeparator;
-if ($^O =~ /MacOS/i) {
+if ($^O =~ /MacOS/io) {
 	$pathSeparator = ":";
 	$isMacOS = 1;
 } else {
@@ -74,6 +74,7 @@ sub _initialize {
     my($self) = shift;
     $self->SUPER::_initialize();
     $self->tocTitlePrefix('Class:');
+    $self->{CLASS} = "HeaderDoc::ObjCClass";
 }
 
 sub getMethodType {
@@ -81,9 +82,9 @@ sub getMethodType {
 	my $declaration = shift;
 	my $methodType = "";
 		
-	if ($declaration =~ /^\s*-/) {
+	if ($declaration =~ /^\s*-/o) {
 	    $methodType = "instm";
-	} elsif ($declaration =~ /^\s*\+/) {
+	} elsif ($declaration =~ /^\s*\+/o) {
 	    $methodType = "clm";
 	} else {
 		# my $filename = $HeaderDoc::headerObject->filename();
@@ -101,9 +102,9 @@ sub getMethodType {
 sub docNavigatorComment {
     my $self = shift;
     my $name = $self->name();
-    $name =~ s/;//sg;
-    my $navComment = "<!-- headerDoc=cl; name=$name-->";
+    $name =~ s/;//sgo;
     my $uid = $self->apiuid("cl"); # "//apple_ref/occ/cl/$name";
+    my $navComment = "<!-- headerDoc=cl; uid=$uid; name=$name-->";
     my $appleRef = "<a name=\"$uid\"></a>";
     
     return "$navComment\n$appleRef";

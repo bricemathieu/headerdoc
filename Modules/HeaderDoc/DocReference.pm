@@ -4,7 +4,7 @@
 # Synopsis: 	Used by gatherHeaderDoc.pl to hold references to doc 
 #		for individual headers and classes
 # Author: Matt Morse (matt@apple.com)
-# Last Updated: $Date: 2003/10/03 20:48:18 $
+# Last Updated: $Date: 2004/06/02 22:39:14 $
 # 
 # Copyright (c) 1999-2004 Apple Computer, Inc.  All rights reserved.
 #
@@ -55,6 +55,7 @@ sub new {
 sub _initialize {
     my($self) = shift;
     $self->{OUTPUTFORMAT} = undef;
+    $self->{UID} = undef;
     $self->{NAME} = undef;
     $self->{TYPE} = undef; # Header, CPPClass, etc
     $self->{PATH} = undef;
@@ -91,6 +92,16 @@ sub outputformat {
 }
 
 
+sub uid {
+    my $self = shift;
+
+    if (@_) {
+        $self->{UID} = shift;
+    }
+    return $self->{UID};
+}
+
+
 sub name {
     my $self = shift;
 
@@ -98,6 +109,16 @@ sub name {
         $self->{NAME} = shift;
     }
     return $self->{NAME};
+}
+
+
+sub shortname {
+    my $self = shift;
+
+    if (@_) {
+        $self->{SHORTNAME} = shift;
+    }
+    return $self->{SHORTNAME};
 }
 
 
@@ -115,6 +136,7 @@ sub printObject {
     my $self = shift;
  
     print "----- DocReference Object ------\n";
+    print "uid:  $self->{UID}\n";
     print "name: $self->{NAME}\n";
     print "type: $self->{TYPE}\n";
     print "path: $self->{PATH}\n";

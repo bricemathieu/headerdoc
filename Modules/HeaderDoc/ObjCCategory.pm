@@ -6,7 +6,7 @@
 #
 #
 # Author: Matt Morse (matt@apple.com)
-# Last Updated: $Date: 2004/02/09 19:35:19 $
+# Last Updated: $Date: 2004/06/10 22:12:16 $
 # 
 # Copyright (c) 1999-2004 Apple Computer, Inc.  All rights reserved.
 #
@@ -50,7 +50,7 @@ $VERSION = '1.20';
 ################ Portability ###################################
 my $isMacOS;
 my $pathSeparator;
-if ($^O =~ /MacOS/i) {
+if ($^O =~ /MacOS/io) {
 	$pathSeparator = ":";
 	$isMacOS = 1;
 } else {
@@ -74,6 +74,7 @@ sub _initialize {
     my($self) = shift;
 	$self->SUPER::_initialize();
     $self->tocTitlePrefix('Category:');
+    $self->{CLASS} = "HeaderDoc::ObjCCategory";
 }
 
 sub className {
@@ -93,9 +94,9 @@ sub getMethodType {
 	my $declaration = shift;
 	my $methodType = "";
 		
-	if ($declaration =~ /^\s*-/) {
+	if ($declaration =~ /^\s*-/o) {
 	    $methodType = "instm";
-	} elsif ($declaration =~ /^\s*\+/) {
+	} elsif ($declaration =~ /^\s*\+/o) {
 	    $methodType = "clm";
 	} else {
 		# my $filename = $HeaderDoc::headerObject->filename();
@@ -115,11 +116,11 @@ sub docNavigatorComment {
     my $name = $self->name();
     
     # regularize name by removing spaces and semicolons, if any
-    $name =~ s/\s+//g;
-    $name =~ s/;//sg;
+    $name =~ s/\s+//go;
+    $name =~ s/;//sgo;
     
-    my $navComment = "<!-- headerDoc=cat; name=$name-->";
     my $uid = $self->apiuid("cat"); # "//apple_ref/occ/cat/$name";
+    my $navComment = "<!-- headerDoc=cat; uid=$uid; name=$name-->";
     my $appleRef = "<a name=\"$uid\"></a>";
 
     registerUID($uid);
@@ -141,7 +142,7 @@ sub getClassAndCategoryName {
     my $filename = shift; # $HeaderDoc::headerObject->filename();
     my $linenum = shift; 
 
-    if ($fullName =~ /(\w+)\s*(\((.*)\))?/) {
+    if ($fullName =~ /(\w+)\s*(\((.*)\))?/o) {
     	$className = $1;
     	$categoryName =$3;
     	if (!length ($className)) {
